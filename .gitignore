@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Daily evaluation raw output (large, noisy)
+evaluations/
+
+# Claude Code context (internal, not for repo visitors)
+CLAUDE.md
