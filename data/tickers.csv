@@ -1,0 +1,31 @@
+ticker,sector,size,query
+NVDA,Technology,mega,What does the market expect from NVIDIA's growth trajectory?
+AAPL,Technology,mega,What are the key risks and opportunities for Apple?
+MSFT,Technology,mega,Is Microsoft's AI investment justified by the fundamentals?
+AMZN,Consumer Discretionary,mega,What does the market expect from Amazon's growth?
+GOOG,Communication Services,mega,Is Alphabet undervalued relative to its AI position?
+META,Communication Services,mega,Is Meta's AI pivot justified by the fundamentals?
+TSLA,Consumer Discretionary,mega,What are the biggest risks for Tesla?
+JPM,Financials,large,What does the market expect from JPMorgan?
+UNH,Healthcare,large,What are the key risks for UnitedHealth?
+JNJ,Healthcare,large,Is Johnson & Johnson fairly valued as a defensive holding?
+XOM,Energy,large,Is Exxon fairly valued at current oil prices?
+V,Financials,large,Can Visa sustain its premium valuation?
+WMT,Consumer Staples,mega,What does the market expect from Walmart's growth?
+PG,Consumer Staples,large,Is Procter & Gamble's defensive premium justified?
+CAT,Industrials,large,What does the market expect from Caterpillar given the infrastructure cycle?
+CRM,Technology,large,Is Salesforce's growth story intact?
+AMD,Technology,large,How does AMD's competitive position look?
+NFLX,Communication Services,large,Can Netflix sustain its growth and margins?
+COST,Consumer Staples,large,Can Costco sustain its premium valuation?
+LLY,Healthcare,mega,Is Eli Lilly's GLP-1 growth priced in?
+DE,Industrials,large,What does the market expect from Deere given the ag cycle?
+NEE,Utilities,large,Is NextEra Energy's growth premium justified?
+SQ,Financials,mid,What are the key risks and opportunities for Block?
+SHOP,Technology,mid,Can Shopify sustain its growth trajectory?
+PLTR,Technology,mid,Is Palantir's valuation justified by its AI positioning?
+COIN,Financials,mid,What does the market expect from Coinbase?
+ABNB,Consumer Discretionary,mid,Is Airbnb fairly valued?
+CRWD,Technology,mid,What does the market expect from CrowdStrike's growth?
+BABA,Technology,large,What are the key risks for Alibaba?
+TSM,Technology,mega,What does the market expect from TSMC's growth?
