@@ -13,12 +13,14 @@ Two model tiers:
     (needs strong structured output and nuanced reasoning)
   - DATA_MODEL: reserved for future data extraction nodes
     (can be cheaper/faster since it just formats data)
+
+Configuration lives in .env only. Shell environment variables do not override.
 """
 import os
 
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic").lower()
 
-_DEFAULTS = {
+_MODELS = {
     "anthropic": {
         "reasoning": "claude-sonnet-4-6",
         "data": "claude-haiku-4-5-20251001",
@@ -29,8 +31,8 @@ _DEFAULTS = {
     },
 }
 
-REASONING_MODEL = os.environ.get("REASONING_MODEL", _DEFAULTS[LLM_PROVIDER]["reasoning"])
-DATA_MODEL = os.environ.get("DATA_MODEL", _DEFAULTS[LLM_PROVIDER]["data"])
+REASONING_MODEL = _MODELS[LLM_PROVIDER]["reasoning"]
+DATA_MODEL = _MODELS[LLM_PROVIDER]["data"]
 
 
 def get_llm(model: str = None, structured_output_schema=None):

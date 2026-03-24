@@ -14,7 +14,7 @@ from rich.rule import Rule
 
 # Load .env from project root (one level up from this file, or current dir)
 env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(env_path)
+load_dotenv(env_path, override=True)
 
 from variant.config import LLM_PROVIDER
 from variant.graph import build_graph

@@ -49,7 +49,7 @@ from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 
 env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(env_path)
+load_dotenv(env_path, override=True)
 
 from variant.graph import build_graph
 from variant.tools.yfinance_tools import fetch_financial_snapshot
