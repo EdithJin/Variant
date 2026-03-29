@@ -1,0 +1,35 @@
+name: Score Evaluations
+
+on:
+  schedule:
+    # Run at 9pm UTC weekdays (after US market close at 4pm ET = 8pm UTC)
+    - cron: '0 21 * * 1-5'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e .
+
+      - name: Score all eligible evaluations
+        run: python -m variant.evaluate --score-all
+
+      - name: Commit scoring results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add results/scoring_log.csv
+          git diff --staged --quiet || git commit -m "score: update scoring_log.csv at $(date -u +%Y-%m-%d)"
+          git push

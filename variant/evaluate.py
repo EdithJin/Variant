@@ -259,6 +259,11 @@ def run_analysis(basket: list[dict] = None):
     _write_csv(out_dir / "analysis_summary.csv", analysis_rows)
     _write_csv(out_dir / "sanity_summary.csv", sanity_rows)
 
+    # Also save analysis_summary.csv to results/ (tracked by git, available in CI for scoring)
+    tracked_dir = RESULTS_DIR / "evaluations" / today
+    tracked_dir.mkdir(parents=True, exist_ok=True)
+    _write_csv(tracked_dir / "analysis_summary.csv", analysis_rows)
+
     n_ok = sum(1 for r in analysis_rows if r["status"] == "success")
     n_err = sum(1 for r in analysis_rows if r["status"] == "error")
     print(f"\n{'=' * 55}")
@@ -270,7 +275,7 @@ def run_analysis(basket: list[dict] = None):
 
 # ── Phase 2: Scoring ──────────────────────────────────────────────────
 
-def score_evaluation(eval_date: str):
+def score_evaluation(eval_date: str, horizon: int = None):
     """
     Score a past evaluation at the current date.
 
@@ -281,13 +286,22 @@ def score_evaluation(eval_date: str):
       closest=bear  + stock down → WRONG   (market was right)
       closest=base  or flat      → NEUTRAL
 
-    Records days_elapsed so we can analyze accuracy by time horizon.
+    Records days_elapsed and horizon so we can analyze accuracy by time horizon.
+
+    Args:
+        eval_date: ISO date string of the evaluation to score.
+        horizon: The target scoring horizon (7, 30, or 90 days). If None,
+            inferred from days_elapsed.
     """
-    eval_dir = EVAL_DIR / eval_date
-    summary_csv = eval_dir / "analysis_summary.csv"
+    # Try results/ first (tracked by git, available in CI), fall back to evaluations/
+    summary_csv = RESULTS_DIR / "evaluations" / eval_date / "analysis_summary.csv"
     if not summary_csv.exists():
-        print(f"Error: {summary_csv} not found")
+        summary_csv = EVAL_DIR / eval_date / "analysis_summary.csv"
+    if not summary_csv.exists():
+        print(f"Error: analysis_summary.csv not found for {eval_date}")
         sys.exit(1)
+
+    eval_dir = EVAL_DIR / eval_date
 
     with open(summary_csv) as f:
         analyses = list(csv.DictReader(f))
@@ -296,7 +310,14 @@ def score_evaluation(eval_date: str):
     eval_dt = date.fromisoformat(eval_date)
     days_elapsed = (today - eval_dt).days
 
-    print(f"Scoring evaluation from {eval_date} ({days_elapsed} days ago)")
+    # Determine which horizon this scoring satisfies
+    if horizon is None:
+        for h in SCORING_HORIZONS:
+            if days_elapsed >= HORIZON_MIN_DAYS.get(h, h - 5):
+                horizon = h
+        horizon = horizon or days_elapsed
+
+    print(f"Scoring evaluation from {eval_date} ({days_elapsed} days ago, ~{horizon}d horizon)")
     print("-" * 55)
 
     score_rows = []
@@ -331,7 +352,7 @@ def score_evaluation(eval_date: str):
 
         score_rows.append({
             "eval_date": eval_date, "score_date": today.isoformat(),
-            "days_elapsed": days_elapsed,
+            "days_elapsed": days_elapsed, "horizon": horizon,
             "ticker": ticker, "sector": entry.get("sector", ""),
             "size": entry.get("size", ""),
             "price_at_analysis": price_at_analysis,
@@ -352,11 +373,16 @@ def score_evaluation(eval_date: str):
         print("No tickers scored.")
         return
 
-    # Save to eval directory
-    _write_csv(eval_dir / f"scores_{days_elapsed}d.csv", score_rows)
+    # Save per-eval scores to results/ (tracked by git)
+    tracked_eval_dir = RESULTS_DIR / "evaluations" / eval_date
+    tracked_eval_dir.mkdir(parents=True, exist_ok=True)
+    _write_csv(tracked_eval_dir / f"scores_{horizon}d.csv", score_rows)
+
+    # Also save to local evaluations/ if it exists (convenience, not required)
+    if eval_dir.exists():
+        _write_csv(eval_dir / f"scores_{horizon}d.csv", score_rows)
 
     # Append to results/scoring_log.csv
-    RESULTS_DIR.mkdir(exist_ok=True)
     log_path = RESULTS_DIR / "scoring_log.csv"
     _append_csv(log_path, score_rows)
 
@@ -375,22 +401,30 @@ def score_evaluation(eval_date: str):
 
 
 def score_all_evaluations():
-    """Score all past evaluations that have enough elapsed time for each horizon."""
-    if not EVAL_DIR.exists():
-        print("No evaluations found.")
-        return
+    """Score all past evaluations that have enough elapsed time for each horizon.
 
+    Checks both evaluations/ (local) and results/evaluations/ (tracked) for
+    analysis_summary.csv files. Deduplicates by (eval_date, horizon) so each
+    evaluation is scored exactly once per horizon (7d, 30d, 90d).
+    """
     today = date.today()
     scored = set()
 
-    # Load existing scoring log to avoid duplicate scoring
+    # Load existing scoring log to avoid duplicate scoring — key on (eval_date, horizon)
     log_path = RESULTS_DIR / "scoring_log.csv"
     if log_path.exists():
         with open(log_path) as f:
             for row in csv.DictReader(f):
-                scored.add((row["eval_date"], row["days_elapsed"]))
+                scored.add((row["eval_date"], str(row.get("horizon", ""))))
 
-    eval_dates = sorted(d.name for d in EVAL_DIR.iterdir() if d.is_dir() and (d / "analysis_summary.csv").exists())
+    # Collect eval dates from both local and tracked locations
+    eval_dates = set()
+    for search_dir in [EVAL_DIR, RESULTS_DIR / "evaluations"]:
+        if search_dir.exists():
+            for d in search_dir.iterdir():
+                if d.is_dir() and (d / "analysis_summary.csv").exists():
+                    eval_dates.add(d.name)
+    eval_dates = sorted(eval_dates)
 
     if not eval_dates:
         print("No evaluation directories with analysis_summary.csv found.")
@@ -410,11 +444,8 @@ def score_all_evaluations():
                 key = (eval_date, str(horizon))
                 if key not in scored:
                     print(f"\nScoring {eval_date} at ~{horizon}d horizon ({days_elapsed}d elapsed):")
-                    score_evaluation(eval_date)
-                    # Mark all horizon levels as scored for this eval_date
-                    # (since score_evaluation records actual days_elapsed, not horizon)
-                    scored.add((eval_date, str(days_elapsed)))
-                    break  # Only score once per eval_date per run
+                    score_evaluation(eval_date, horizon=horizon)
+                    scored.add(key)
 
     print(f"\nDone. Results in: {log_path}")
 
