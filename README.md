@@ -49,9 +49,11 @@ What's real:
 
 What's stubbed (Phase 2):
 - Market expectations data (will use FMP/Zacks for consensus estimates)
-- News & sentiment (will use Tavily/Serper)
 - SEC filings (will use EDGAR API + ChromaDB RAG)
 - Historical base rate data (will use Damodaran's datasets)
+
+What's live:
+- News search via Tavily (primary) + DuckDuckGo (zero-config fallback)
 
 ## Evaluation
 
@@ -107,13 +109,16 @@ variant/
 │   ├── hypothesis_generator.py  # LLM: construct competing narratives
 │   ├── analyst.py           # LLM: 5-step analytical reasoning
 │   ├── synthesis.py         # Python formatting + LLM for exec summary
+│   ├── news.py              # News search node (Tavily → DuckDuckGo → stub)
 │   └── stubs.py             # Placeholder data nodes (Phase 2 replacements)
 ├── prompts/
 │   ├── hypothesis_generator.py  # Narrative construction prompts
 │   ├── analyst.py               # 5-step analysis prompts
 │   └── synthesis.py             # Brief synthesis prompts
 └── tools/
-    └── yfinance_tools.py    # yfinance data + reverse DCF calculation
+    ├── yfinance_tools.py    # yfinance data + reverse DCF calculation
+    ├── tavily_search.py     # Tavily news search (LLM-optimized snippets)
+    └── ddg_search.py        # DuckDuckGo fallback (zero-config, no API key)
 ```
 
 ## Examples
@@ -132,6 +137,7 @@ Set in `.env`:
 | Variable | Options | Default |
 |----------|---------|---------|
 | `LLM_PROVIDER` | `groq` (free), `anthropic` | `anthropic` |
+| `TAVILY_API_KEY` | API key from [app.tavily.com](https://app.tavily.com) | Falls back to DuckDuckGo |
 
 ## Architecture
 
