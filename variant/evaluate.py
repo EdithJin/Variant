@@ -168,6 +168,64 @@ def run_single(ticker: str, query: str, graph) -> dict:
 
 # ── Phase 1: Analysis ─────────────────────────────────────────────────
 
+def _build_analysis_row(today, ticker, sector, size, query, provider, model, state, elapsed):
+    """Extract a summary row from a completed analysis state."""
+    narratives = state.get("narratives", [])
+    probs = {n.get("label", "?"): n.get("probability", 0) for n in narratives}
+    gap = state.get("expectations_gap") or {}
+    fd = state.get("financial_data") or {}
+    return {
+        "date": today, "ticker": ticker, "sector": sector, "size": size,
+        "query": query, "provider": provider, "model": model,
+        "price_at_analysis": fd.get("current_price"),
+        "market_cap_bn": fd.get("market_cap_bn"),
+        "revenue_growth_pct": fd.get("revenue_growth_yoy_pct"),
+        "implied_cagr_pct": gap.get("price_implied_growth_pct"),
+        "closest_narrative": gap.get("closest_narrative"),
+        "gap_assessment": (gap.get("gap_assessment") or "").replace("\n", " "),
+        "prob_bull": round(probs.get("bull", 0), 3),
+        "prob_base": round(probs.get("base", 0), 3),
+        "prob_bear": round(probs.get("bear", 0), 3),
+        "n_contradictions": len(state.get("contradictions", [])),
+        "n_base_rate_flags": len(state.get("base_rate_flags", [])),
+        "elapsed_s": elapsed, "status": "success",
+    }
+
+
+def _build_error_row(today, ticker, sector, size, query, provider, model, error, elapsed):
+    """Build a summary row for a failed analysis."""
+    return {
+        "date": today, "ticker": ticker, "sector": sector, "size": size,
+        "query": query, "provider": provider, "model": model,
+        "price_at_analysis": None, "market_cap_bn": None,
+        "revenue_growth_pct": None, "implied_cagr_pct": None,
+        "closest_narrative": None, "gap_assessment": str(error),
+        "prob_bull": None, "prob_base": None, "prob_bear": None,
+        "n_contradictions": None, "n_base_rate_flags": None,
+        "elapsed_s": elapsed, "status": "error",
+    }
+
+
+def _load_existing_summary(out_dir: Path) -> dict[str, dict]:
+    """Load already-completed tickers from an existing analysis_summary.csv."""
+    summary_path = out_dir / "analysis_summary.csv"
+    if not summary_path.exists():
+        return {}
+    with open(summary_path) as f:
+        return {row["ticker"]: row for row in csv.DictReader(f) if row.get("status") == "success"}
+
+
+def _save_summaries(out_dir: Path, analysis_rows: list[dict], sanity_rows: list[dict]):
+    """Write summary CSVs to both local eval dir and tracked results dir."""
+    _write_csv(out_dir / "analysis_summary.csv", analysis_rows)
+    _write_csv(out_dir / "sanity_summary.csv", sanity_rows)
+    # Also save to results/ (tracked by git, available in CI for scoring)
+    today = out_dir.name
+    tracked_dir = RESULTS_DIR / "evaluations" / today
+    tracked_dir.mkdir(parents=True, exist_ok=True)
+    _write_csv(tracked_dir / "analysis_summary.csv", analysis_rows)
+
+
 def run_analysis(basket: list[dict] = None):
     basket = basket or load_basket()
     today = date.today().isoformat()
@@ -185,15 +243,35 @@ def run_analysis(basket: list[dict] = None):
         print("⚠  Running on Groq (free tier). Production evaluations should use Anthropic/Sonnet.")
         print()
 
+    # Resume support: load previously completed tickers for today
+    completed = _load_existing_summary(out_dir)
+    if completed:
+        print(f"Resuming: {len(completed)} tickers already completed, skipping them.")
+        print()
+
     graph = build_graph()
     analysis_rows = []
     sanity_rows = []
+
+    # Re-add previously completed rows so the final CSV is complete
+    for row in completed.values():
+        analysis_rows.append(row)
+        sanity_rows.append({
+            "date": today, "ticker": row["ticker"],
+            "sanity_status": "pass", "passed": row.get("n_contradictions", ""), "failed": 0,
+        })
 
     for i, entry in enumerate(basket):
         ticker = entry["ticker"]
         query = entry["query"]
         sector = entry.get("sector", "")
         size = entry.get("size", "")
+
+        # Skip already-completed tickers
+        if ticker in completed:
+            print(f"[{i+1}/{len(basket)}] {ticker} ({sector}/{size}) — already done, skipping")
+            continue
+
         print(f"[{i+1}/{len(basket)}] {ticker} ({sector}/{size})")
         start = time.time()
 
@@ -201,7 +279,7 @@ def run_analysis(basket: list[dict] = None):
             state = run_single(ticker, query, graph)
             elapsed = round(time.time() - start, 1)
 
-            # Save outputs
+            # Save outputs immediately (survives crashes)
             (out_dir / f"{ticker}_brief.txt").write_text(state.get("final_brief", ""))
             (out_dir / f"{ticker}_state.json").write_text(json.dumps(_serialize_state(state), indent=2, default=str))
 
@@ -210,28 +288,8 @@ def run_analysis(basket: list[dict] = None):
             (out_dir / f"{ticker}_sanity.json").write_text(json.dumps(sanity, indent=2))
             print(f"  {elapsed}s | sanity: {sanity['passed']}✓ {sanity['failed']}✗")
 
-            # Extract row for analysis_summary.csv
-            narratives = state.get("narratives", [])
-            probs = {n.get("label", "?"): n.get("probability", 0) for n in narratives}
-            gap = state.get("expectations_gap") or {}
-            fd = state.get("financial_data") or {}
-
-            analysis_rows.append({
-                "date": today, "ticker": ticker, "sector": sector, "size": size,
-                "query": query, "provider": provider, "model": model,
-                "price_at_analysis": fd.get("current_price"),
-                "market_cap_bn": fd.get("market_cap_bn"),
-                "revenue_growth_pct": fd.get("revenue_growth_yoy_pct"),
-                "implied_cagr_pct": gap.get("price_implied_growth_pct"),
-                "closest_narrative": gap.get("closest_narrative"),
-                "gap_assessment": (gap.get("gap_assessment") or "").replace("\n", " "),
-                "prob_bull": round(probs.get("bull", 0), 3),
-                "prob_base": round(probs.get("base", 0), 3),
-                "prob_bear": round(probs.get("bear", 0), 3),
-                "n_contradictions": len(state.get("contradictions", [])),
-                "n_base_rate_flags": len(state.get("base_rate_flags", [])),
-                "elapsed_s": elapsed, "status": "success",
-            })
+            row = _build_analysis_row(today, ticker, sector, size, query, provider, model, state, elapsed)
+            analysis_rows.append(row)
             sanity_rows.append({
                 "date": today, "ticker": ticker,
                 "sanity_status": sanity["status"],
@@ -241,35 +299,27 @@ def run_analysis(basket: list[dict] = None):
         except Exception as e:
             elapsed = round(time.time() - start, 1)
             print(f"  {elapsed}s | ERROR: {type(e).__name__}: {e}")
-            analysis_rows.append({
-                "date": today, "ticker": ticker, "sector": sector, "size": size,
-                "query": query, "provider": provider, "model": model,
-                "price_at_analysis": None, "market_cap_bn": None,
-                "revenue_growth_pct": None, "implied_cagr_pct": None,
-                "closest_narrative": None, "gap_assessment": str(e),
-                "prob_bull": None, "prob_base": None, "prob_bear": None,
-                "n_contradictions": None, "n_base_rate_flags": None,
-                "elapsed_s": elapsed, "status": "error",
-            })
+            analysis_rows.append(
+                _build_error_row(today, ticker, sector, size, query, provider, model, e, elapsed)
+            )
             sanity_rows.append({
                 "date": today, "ticker": ticker,
                 "sanity_status": "error", "passed": 0, "failed": 0,
             })
 
-    _write_csv(out_dir / "analysis_summary.csv", analysis_rows)
-    _write_csv(out_dir / "sanity_summary.csv", sanity_rows)
-
-    # Also save analysis_summary.csv to results/ (tracked by git, available in CI for scoring)
-    tracked_dir = RESULTS_DIR / "evaluations" / today
-    tracked_dir.mkdir(parents=True, exist_ok=True)
-    _write_csv(tracked_dir / "analysis_summary.csv", analysis_rows)
+        # Save CSVs after every ticker (survives crashes/rate limits)
+        _save_summaries(out_dir, analysis_rows, sanity_rows)
 
     n_ok = sum(1 for r in analysis_rows if r["status"] == "success")
     n_err = sum(1 for r in analysis_rows if r["status"] == "error")
     print(f"\n{'=' * 55}")
     print(f"PHASE 1 COMPLETE — {today}")
     print(f"Success: {n_ok}/{len(basket)} | Errors: {n_err}")
-    print(f"Next: score with --score {today} (after 7+ days)")
+    if n_err > 0:
+        print(f"To retry failed tickers: python -m variant.evaluate")
+        print(f"({n_ok} completed tickers will be skipped automatically)")
+    else:
+        print(f"Next: score with --score {today} (after 7+ days)")
     print(f"{'=' * 55}")
 
 
