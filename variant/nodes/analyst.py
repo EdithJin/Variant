@@ -110,6 +110,31 @@ def _format_expectations(ed: dict | None) -> str:
     return "\n".join(lines) if lines else "Minimal expectations data available."
 
 
+def _format_news(data: dict | None) -> str:
+    """Format news articles as readable text with analytical guidance."""
+    if not data or data.get("source") == "stub":
+        return "News & Sentiment: Not available."
+    articles = data.get("articles", [])
+    if not articles:
+        return "News & Sentiment: No recent articles found."
+    lines = [f"Recent news ({len(articles)} articles):"]
+    for i, a in enumerate(articles, 1):
+        title = a.get("title", "Untitled")
+        source = a.get("source", "Unknown")
+        date = a.get("published_date", "")
+        content = a.get("content", "")
+        date_str = f" ({date})" if date else ""
+        lines.append(f"\n{i}. {title} — {source}{date_str}")
+        if content:
+            lines.append(f"   {content[:300]}")
+    lines.append(
+        "\nAnalytical guidance: Look for information that confirms or contradicts "
+        "your narratives. Pay attention to management guidance, competitive "
+        "developments, and macro factors."
+    )
+    return "\n".join(lines)
+
+
 def _format_simple_stub(data: dict | None, label: str) -> str:
     if not data or data.get("source") == "stub":
         return f"{label}: Not available in POC."
@@ -129,7 +154,7 @@ def analyst_node(state: AgentState) -> dict:
         narratives_json=json.dumps(state.get("narratives", []), indent=2),
         financial_data_json=_format_financial_data(state.get("financial_data")),
         expectations_data_json=_format_expectations(state.get("expectations_data")),
-        news_sentiment_json=_format_simple_stub(state.get("news_sentiment"), "News & Sentiment"),
+        news_sentiment_json=_format_news(state.get("news_sentiment")),
         filings_data_json=_format_simple_stub(state.get("filings_data"), "SEC Filings"),
         base_rate_data_json=_format_simple_stub(state.get("base_rate_data"), "Base Rates"),
         iteration=state.get("iteration", 0),

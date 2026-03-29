@@ -24,10 +24,10 @@ from variant.nodes.financial_data import business_context_node, financial_data_n
 from variant.nodes.hypothesis_generator import hypothesis_generator_node
 from variant.nodes.stubs import (
     expectations_stub_node,
-    news_stub_node,
     filings_stub_node,
     base_rate_stub_node,
 )
+from variant.nodes.news import news_node
 from variant.nodes.analyst import analyst_node
 from variant.nodes.synthesis import synthesis_node
 
@@ -52,7 +52,7 @@ def data_gathering_node(state: AgentState) -> dict:
     # Stubs need the latest financial data to derive their placeholder values
     stub_state = {**state, **updates}
     updates.update(expectations_stub_node(stub_state))
-    updates.update(news_stub_node(stub_state))
+    updates.update(news_node(stub_state))
     updates.update(filings_stub_node(stub_state))
     updates.update(base_rate_stub_node(stub_state))
 

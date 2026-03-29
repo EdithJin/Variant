@@ -38,14 +38,6 @@ def expectations_stub_node(state: AgentState) -> dict:
     }
 
 
-def news_stub_node(state: AgentState) -> dict:
-    return {
-        "news_sentiment": {
-            "source": "stub",
-        }
-    }
-
-
 def filings_stub_node(state: AgentState) -> dict:
     return {
         "filings_data": {

@@ -153,6 +153,30 @@ def synthesis_node(state: AgentState) -> dict:
     divider = "=" * 55
     iteration = state.get("iteration", 1)
 
+    # Determine which data sources are real vs stubbed
+    live_sources = ["financial data (yfinance)"]
+    stub_sources = []
+
+    news = state.get("news_sentiment") or {}
+    if news.get("source") in ("tavily", "duckduckgo"):
+        live_sources.append(f"news ({news['source']})")
+    else:
+        stub_sources.append("news")
+
+    if (state.get("filings_data") or {}).get("source") != "stub":
+        live_sources.append("SEC filings")
+    else:
+        stub_sources.append("SEC filings")
+
+    if (state.get("base_rate_data") or {}).get("source") == "stub":
+        stub_sources.append("base rates")
+    else:
+        live_sources.append("base rates")
+
+    coverage = f"Live: {', '.join(live_sources)}"
+    if stub_sources:
+        coverage += f" | Stubs: {', '.join(stub_sources)}"
+
     brief = f"""{divider}
 VARIANT RESEARCH BRIEF: {state["ticker"]}
 Query: {state["query"]}
@@ -164,7 +188,7 @@ EXECUTIVE SUMMARY
 {body}
 
 DATA & CONFIDENCE
-Coverage: Financial data (yfinance) | Stubs: news, SEC filings, base rates
+Coverage: {coverage}
 Iterations: {iteration}
 Confidence: {confidence or 'Not assessed'}
 {divider}"""
