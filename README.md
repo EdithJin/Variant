@@ -1,5 +1,7 @@
 # Variant
 
+![CI](https://github.com/EdithJin/Variant/actions/workflows/ci.yml/badge.svg)
+
 An AI financial research agent that implements expectations investing analysis — constructing competing narratives about a company's future, reverse-engineering what the market prices in, and identifying where consensus might be wrong.
 
 ## What This Is
