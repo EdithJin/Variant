@@ -69,7 +69,8 @@ Functions that take inputs and return outputs. No reasoning. Should be fast, cac
 | `fetch_business_context(ticker)` | Company name, sector, industry, description | Real |
 | `fetch_financial_snapshot(ticker)` | Price, margins, multiples, consensus, implied expectations | Real |
 | `compute_implied_expectations(ev, revenue, margin)` | Simplified reverse DCF → implied revenue CAGR | Real |
-| `search_news(query)` | Web search for recent financial news | Phase 2 |
+| `fetch_market_context(ticker)` | Multi-timeframe relative performance vs SPY/QQQ/sector ETF + VIX | Phase 2 |
+| `search_news(query)` | Web search for recent financial news (ticker-specific AND macro) | Phase 2 |
 | `fetch_sec_filing(ticker, type)` | Download and summarize SEC filings | Phase 2 |
 | `lookup_base_rates(sector, metric)` | Historical growth/margin/valuation percentiles | Phase 2 |
 
@@ -98,6 +99,7 @@ Inspired by the [Agent Skills architecture](https://docs.anthropic.com/en/docs/a
 | Expectations Investing | Analyst processes implied expectations data | Detailed instructions for interpreting reverse DCF, comparing implied CAGR to narratives, identifying variant perception |
 | Base Rate Analysis | Analyst checks growth/margin sustainability | Instructions for interpreting growth persistence percentiles, margin reversion patterns, with reference to Damodaran's empirical data |
 | Earnings Reaction | Query involves earnings event | Instructions for analyzing expectations vs. actuals, guidance language interpretation, options-implied move analysis |
+| Macro Decomposition | Analyst receives market context data | Instructions for separating systematic (market/sector-wide) moves from idiosyncratic (stock-specific) moves, adjusting expectations gap interpretation during macro-driven regimes |
 | Competitive Analysis | Analyst fetches data for a second ticker | Instructions for relative valuation, competitive dynamics framework, market share trend analysis |
 
 **Implementation in LangGraph (no Claude Agent SDK required):** Skills translate to dynamic prompt assembly — the analyst's system prompt stays lean, and each tool's return value includes relevant analytical instructions alongside the data. The skill's "instructions" load only when the tool is called. This achieves progressive disclosure without the full Agent Skills filesystem architecture.
@@ -117,8 +119,9 @@ A **stub** is a function that returns structurally valid but minimal/derived dat
 | Data Source | POC (stub) | Phase 2 (real) | What changes |
 |-------------|-----------|---------------|-------------|
 | **Financial Data** | Real — yfinance snapshot with ~30 fields + reverse DCF | Same, possibly enriched with FMP data | Nothing |
+| **Market Context** | Not implemented. No relative performance or macro data. | `fetch_market_context`: multi-timeframe (1d/5d/1mo/YTD) returns for ticker vs SPY/QQQ/sector ETF + VIX. All yfinance, no new API. | Enables systematic vs. idiosyncratic decomposition |
 | **Expectations** | Derives P/E compression from yfinance. No independent consensus data. | FMP or Zacks API for consensus EPS estimates, estimate revision history, forward revenue estimates | The data that makes expectations gap rigorous |
-| **News & Sentiment** | Returns `{"source": "stub"}`. Analyst sees "Not available." | Tavily/Serper web search for recent articles, earnings call transcript summaries | Enables contradiction detection with real catalysts |
+| **News & Sentiment** | Returns `{"source": "stub"}`. Analyst sees "Not available." | Tavily/Serper web search — **dual scope**: ticker-specific AND macro/market-wide queries | Enables contradiction detection with real catalysts + macro context |
 | **SEC Filings** | Returns `{"source": "stub"}` | EDGAR API for 10-K/10-Q, extract risk factors, management discussion, insider transactions. ChromaDB for RAG over long documents. | Enables risk analysis with primary sources |
 | **Base Rates** | Hardcoded first-principles rules ("fewer than 10% of large-caps sustain 40%+ growth") | Damodaran's annual datasets: actual percentiles for growth persistence, margin reversion, valuation outcomes by sector/size cohort | Replaces heuristics with empirical data |
 
@@ -279,7 +282,74 @@ Implied expectations (reverse DCF): Market prices in 18.5% revenue CAGR over 5yr
 
 ---
 
-## 7. Phase 2 Architecture: Analyst-as-Tool-User
+## 7. Market Context: Systematic vs. Idiosyncratic Decomposition
+
+### The problem
+
+A stock's price movement reflects two distinct forces: **systematic** (market-wide or sector-wide) moves driven by macro events, and **idiosyncratic** (stock-specific) moves driven by company fundamentals. Without separating these, the analyst can't interpret price action correctly.
+
+Example: GOOG drops 8% during a geopolitical crisis. SPY drops 6%, QQQ drops 7%. The GOOG-specific component is only ~1-2% — the rest is the market repricing risk broadly. But ticker-specific news searches return nothing about GOOG declining, because the cause is macro, not company-specific. Without market context, the analyst might wrongly conclude "the market is repricing GOOG's fundamentals" when it's repricing everything.
+
+This matters for the expectations gap analysis. The reverse DCF tells you what growth the price implies — but if the price just dropped 8% due to a war, the implied CAGR shifted for reasons unrelated to anyone's view of GOOG's revenue trajectory. The analyst needs to know this.
+
+### Solution: `fetch_market_context(ticker)` tool
+
+A lightweight tool that fetches multi-timeframe returns for the ticker, broad market, and sector, all from yfinance (no new API needed).
+
+**Benchmarks fetched:**
+- **SPY** — broad market (systematic risk)
+- **QQQ** — tech-heavy / growth proxy
+- **Sector ETF** — sector-specific moves (XLK for tech, XLF for financials, XLE for energy, etc.)
+
+**Timeframes fetched (all in a single call):**
+
+| Timeframe | What it captures | Why it matters |
+|-----------|-----------------|----------------|
+| **1-day** | Acute events (earnings, geopolitical shock) | If GOOG -4% and SPY -3.5%, today's move is systematic. If GOOG -4% and SPY flat, it's idiosyncratic. |
+| **5-day** | Recent event reactions | A war that started 3 days ago shows here. Captures "this week" context. |
+| **1-month** | Medium-term trend | Separates sustained selloffs from one-day blips. |
+| **YTD** | Regime context | "GOOG -15% YTD, SPY -12%" is a different story than "GOOG -15% YTD, SPY +5%." |
+
+All four timeframes are fetched together — they're essentially free (a few yfinance calls) and cost ~100 tokens in the prompt.
+
+**Output format (presented to analyst as readable text):**
+
+```
+Market Context for GOOG (2026-03-29):
+                    1-day    5-day    1-month    YTD
+  GOOG              -1.2%    -4.8%    -12.3%    +2.1%
+  SPY               -1.0%    -3.9%     -8.1%    -5.2%
+  QQQ               -1.3%    -4.5%     -9.7%    -3.8%
+  XLK (sector ETF)  -1.1%    -4.2%     -9.0%    -4.1%
+
+  Relative to SPY:  -0.2%    -0.9%     -4.2%    +7.3%
+  VIX: 28.5 (elevated — above 20 signals market stress)
+```
+
+The **"Relative to SPY"** row is the key number — it isolates the stock-specific component by subtracting the broad market move.
+
+### How the analyst uses this
+
+The market context data informs multiple steps of the analyst's reasoning:
+
+**Step 2 (Expectations Gap):** Before interpreting the implied CAGR, check whether the stock is moving with the market. If relative performance is near zero across timeframes, the price move is macro-driven and the expectations gap reflects market-wide sentiment, not a changed view on the company's fundamentals. The analyst should note this and weight the gap assessment accordingly.
+
+**Step 4 (Contradiction Detection):** Market context enables a new class of contradictions: "stock down 8% but relative to sector only down 1% — no company-specific deterioration despite the headline move" or "stock flat while sector rallied 5% — underperformance suggests stock-specific headwind even in a favorable macro."
+
+**Narrative Construction (Hypothesis Generator):** In Phase 2, the hypothesis generator could receive a brief macro summary (e.g., "market down 8% this month, VIX elevated at 28") to ensure narratives account for the macro regime rather than constructing purely company-specific stories during a market-wide event.
+
+### News search: ticker-specific AND macro
+
+When the `search_news` tool is implemented (Phase 2b), it should run **two** search scopes:
+
+1. **Ticker-specific:** `"GOOG earnings"`, `"Google AI revenue"` — surfaces company-specific catalysts
+2. **Macro/market-wide:** `"stock market today"`, `"market selloff"`, `"geopolitical risk"` — surfaces systematic drivers that affect the ticker but wouldn't appear in ticker-specific searches
+
+Both are passed to the analyst as separate context sections so it can attribute price action to the right cause.
+
+---
+
+## 8. Phase 2 Architecture: Analyst-as-Tool-User
 
 The POC's biggest architectural limitation: the analyst receives a pre-gathered data dump. It can't investigate further. Phase 2 collapses `data_gathering` + `analyst` into a single agentic node.
 
@@ -324,6 +394,11 @@ def fetch_financials(ticker: str) -> str:
     ...
 
 @tool
+def fetch_market_context(ticker: str) -> str:
+    """Fetch multi-timeframe relative performance vs market, sector, and VIX."""
+    ...
+
+@tool
 def search_news(query: str, max_results: int = 5) -> str:
     """Search recent financial news and earnings commentary."""
     ...
@@ -334,7 +409,7 @@ def lookup_base_rates(sector: str, metric: str) -> str:
     ...
 
 # Bind tools to LLM — works with Claude, Llama, any LangChain model
-analyst_llm = get_llm().bind_tools([fetch_financials, search_news, lookup_base_rates])
+analyst_llm = get_llm().bind_tools([fetch_financials, fetch_market_context, search_news, lookup_base_rates])
 ```
 
 LangGraph's `ToolNode` handles the ReAct loop natively. No Claude Agent SDK required. The system stays model-agnostic.
@@ -365,7 +440,7 @@ This achieves progressive disclosure — the analyst only receives detailed anal
 
 ---
 
-## 8. Evaluation System
+## 9. Evaluation System
 
 ### Two phases, different purposes
 
@@ -457,7 +532,7 @@ results/scoring_log.csv              # Append-only scored results (goes to GitHu
 
 ---
 
-## 9. Design Decisions & Trade-offs
+## 10. Design Decisions & Trade-offs
 
 ### Why no query classification?
 
@@ -485,7 +560,7 @@ The ReAct-style analyst (Phase 2) is architecturally better but harder to debug,
 
 ---
 
-## 10. Configuration
+## 11. Configuration
 
 The LLM provider is configurable via environment variables in `.env`:
 
@@ -496,14 +571,15 @@ The LLM provider is configurable via environment variables in `.env`:
 
 ---
 
-## 11. Phase 2+ Roadmap
+## 12. Phase 2+ Roadmap
 
 | Phase | Feature | Impact |
 |-------|---------|--------|
 | **2a** | Analyst-with-tools (ReAct pattern) | Genuinely agentic: analyst calls tools during reasoning |
-| **2b** | `search_news` tool (Tavily/Serper) | First real tool beyond yfinance; enables contradiction detection |
-| **2c** | `lookup_base_rates` tool (Damodaran datasets) | Empirical base rates replace hardcoded heuristics |
-| **2d** | Evaluation framework (Strategy A + B) | Automated accuracy checks + earnings event scoring |
+| **2b** | `fetch_market_context` tool (yfinance, no new API) | Systematic vs. idiosyncratic decomposition; multi-timeframe relative performance + VIX |
+| **2c** | `search_news` tool (Tavily/Serper) | Ticker-specific AND macro news; enables contradiction detection |
+| **2d** | `lookup_base_rates` tool (Damodaran datasets) | Empirical base rates replace hardcoded heuristics |
+| **2e** | Evaluation framework (Strategy A + B) | Automated accuracy checks + earnings event scoring |
 | **3a** | SEC filings tool (EDGAR + ChromaDB RAG) | Risk factors, insider transactions from primary sources |
 | **3b** | Cross-run caching | Disk cache with TTLs per data type |
 | **3c** | Multi-turn conversation | Follow-up queries that extend previous analysis |
