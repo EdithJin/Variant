@@ -114,24 +114,83 @@ def _format_news(data: dict | None) -> str:
     """Format news articles as readable text with analytical guidance."""
     if not data or data.get("source") == "stub":
         return "News & Sentiment: Not available."
+
+    lines = []
+
+    # Ticker-specific articles
     articles = data.get("articles", [])
-    if not articles:
+    if articles:
+        lines.append(f"Company-specific news ({len(articles)} articles):")
+        for i, a in enumerate(articles, 1):
+            title = a.get("title", "Untitled")
+            source = a.get("source", "Unknown")
+            date = a.get("published_date", "")
+            content = a.get("content", "")
+            date_str = f" ({date})" if date else ""
+            lines.append(f"\n{i}. {title} — {source}{date_str}")
+            if content:
+                lines.append(f"   {content[:300]}")
+
+    # Macro/market-wide articles
+    macro_articles = data.get("macro_articles", [])
+    if macro_articles:
+        lines.append(f"\nMarket & macro news ({len(macro_articles)} articles):")
+        for i, a in enumerate(macro_articles, 1):
+            title = a.get("title", "Untitled")
+            source = a.get("source", "Unknown")
+            date = a.get("published_date", "")
+            content = a.get("content", "")
+            date_str = f" ({date})" if date else ""
+            lines.append(f"\n{i}. {title} — {source}{date_str}")
+            if content:
+                lines.append(f"   {content[:300]}")
+
+    if not lines:
         return "News & Sentiment: No recent articles found."
-    lines = [f"Recent news ({len(articles)} articles):"]
-    for i, a in enumerate(articles, 1):
-        title = a.get("title", "Untitled")
-        source = a.get("source", "Unknown")
-        date = a.get("published_date", "")
-        content = a.get("content", "")
-        date_str = f" ({date})" if date else ""
-        lines.append(f"\n{i}. {title} — {source}{date_str}")
-        if content:
-            lines.append(f"   {content[:300]}")
+
     lines.append(
         "\nAnalytical guidance: Look for information that confirms or contradicts "
         "your narratives. Pay attention to management guidance, competitive "
-        "developments, and macro factors."
+        "developments, and macro factors. Use the macro news to understand whether "
+        "broad market forces are driving this stock's price action."
     )
+    return "\n".join(lines)
+
+
+def _format_market_context(mc: dict | None) -> str:
+    """Format market context as labeled lines matching the financial data style."""
+    if not mc:
+        return "Market Context: Not available."
+    returns = mc.get("returns", {})
+    if not returns:
+        return "Market Context: No data."
+
+    ticker = mc.get("ticker", "?")
+    sector_etf = mc.get("sector_etf")
+    relative = mc.get("relative_to_spy", {})
+    vix = mc.get("vix")
+
+    def fmt(val):
+        if val is None:
+            return "N/A"
+        sign = "+" if val > 0 else ""
+        return f"{sign}{val}%"
+
+    def fmt_row(label, r):
+        return f"{label}: 1-day {fmt(r.get('1d'))} | 5-day {fmt(r.get('5d'))} | 1-month {fmt(r.get('1mo'))} | YTD {fmt(r.get('ytd'))}"
+
+    lines = []
+    ticker_r = returns.get(ticker, {})
+    lines.append(fmt_row(ticker, ticker_r))
+    lines.append(fmt_row("SPY (broad market)", returns.get("SPY", {})))
+    lines.append(fmt_row("QQQ (tech/growth)", returns.get("QQQ", {})))
+    if sector_etf and sector_etf in returns:
+        lines.append(fmt_row(f"{sector_etf} (sector ETF)", returns[sector_etf]))
+    lines.append(fmt_row("Relative to SPY (stock-specific component)", relative))
+    if vix is not None:
+        stress = "elevated, signals market stress" if vix > 20 else "normal range"
+        lines.append(f"VIX: {vix} ({stress})")
+
     return "\n".join(lines)
 
 
@@ -153,6 +212,7 @@ def analyst_node(state: AgentState) -> dict:
         query=state["query"],
         narratives_json=json.dumps(state.get("narratives", []), indent=2),
         financial_data_json=_format_financial_data(state.get("financial_data")),
+        market_context_json=_format_market_context(state.get("market_context")),
         expectations_data_json=_format_expectations(state.get("expectations_data")),
         news_sentiment_json=_format_news(state.get("news_sentiment")),
         filings_data_json=_format_simple_stub(state.get("filings_data"), "SEC Filings"),

@@ -8,9 +8,14 @@ this module. This keeps the agent state serializable and the LLM prompts clean.
 The fetch_financial_snapshot() function collects everything the analyst needs
 in a single call: price data, growth rates, margins, valuation multiples,
 analyst consensus, and EPS surprise history.
+
+The fetch_market_context() function provides multi-timeframe relative
+performance data (ticker vs SPY/QQQ/sector ETF + VIX) so the analyst can
+separate systematic (market-wide) moves from idiosyncratic (stock-specific) ones.
 """
 import yfinance as yf
 import pandas as pd
+from datetime import datetime, timedelta
 
 
 def _safe_get(d: dict, key: str, default=None):
@@ -272,4 +277,130 @@ def fetch_financial_snapshot(ticker_symbol: str) -> dict:
         "eps_surprise_history": eps_surprises,
         "enterprise_value_bn": ev_bn,
         "implied_expectations": implied_expectations,
+    }
+
+
+# ── Sector → ETF mapping ────────────────────────────────────────────────
+SECTOR_ETF_MAP = {
+    "Technology": "XLK",
+    "Healthcare": "XLV",
+    "Financial Services": "XLF",
+    "Financials": "XLF",
+    "Energy": "XLE",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Industrials": "XLI",
+    "Communication Services": "XLC",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
+    "Basic Materials": "XLB",
+}
+
+
+def _compute_return(hist: pd.DataFrame, days: int) -> float | None:
+    """Compute percentage return over the last N trading days from a price history."""
+    if hist is None or hist.empty or len(hist) < 2:
+        return None
+    close = hist["Close"]
+    if len(close) <= days:
+        # Use whatever history we have
+        start_price = float(close.iloc[0])
+    else:
+        start_price = float(close.iloc[-days - 1])
+    end_price = float(close.iloc[-1])
+    if start_price and start_price != 0:
+        return round((end_price / start_price - 1) * 100, 1)
+    return None
+
+
+def fetch_market_context(ticker_symbol: str, sector: str | None = None) -> dict:
+    """
+    Fetch multi-timeframe relative performance for a ticker vs broad market
+    benchmarks and its sector ETF, plus VIX as a volatility indicator.
+
+    Returns a dict with returns at 1-day, 5-day, 1-month, and YTD timeframes
+    for the ticker, SPY, QQQ, and the sector ETF. Also includes the
+    relative-to-SPY returns (the key number for isolating stock-specific moves).
+
+    All data from yfinance — no new API needed.
+    """
+    # Determine sector ETF
+    sector_etf = SECTOR_ETF_MAP.get(sector, None) if sector else None
+
+    # Build list of symbols to fetch
+    symbols = [ticker_symbol, "SPY", "QQQ"]
+    if sector_etf and sector_etf not in symbols:
+        symbols.append(sector_etf)
+
+    # Fetch enough history to cover YTD + buffer
+    today = datetime.now()
+    jan1 = datetime(today.year, 1, 1)
+    ytd_days = (today - jan1).days + 10  # buffer for weekends/holidays
+    period_days = max(ytd_days, 40)  # at least 40 days for 1-month calc
+
+    # Timeframe definitions (in trading days)
+    timeframes = {
+        "1d": 1,
+        "5d": 5,
+        "1mo": 21,
+    }
+
+    results = {}
+    histories = {}
+
+    for symbol in symbols:
+        try:
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period=f"{period_days}d")
+            histories[symbol] = hist
+
+            returns = {}
+            for tf_name, tf_days in timeframes.items():
+                returns[tf_name] = _compute_return(hist, tf_days)
+
+            # YTD: compute from Jan 1 specifically
+            if hist is not None and not hist.empty:
+                jan1_date = pd.Timestamp(datetime(today.year, 1, 1), tz=hist.index.tz)
+                ytd_hist = hist[hist.index >= jan1_date]
+                if len(ytd_hist) >= 2:
+                    returns["ytd"] = round(
+                        (float(ytd_hist["Close"].iloc[-1]) / float(ytd_hist["Close"].iloc[0]) - 1) * 100, 1
+                    )
+                else:
+                    returns["ytd"] = None
+            else:
+                returns["ytd"] = None
+
+            results[symbol] = returns
+        except Exception:
+            results[symbol] = {"1d": None, "5d": None, "1mo": None, "ytd": None}
+
+    # Compute relative-to-SPY returns
+    ticker_returns = results.get(ticker_symbol, {})
+    spy_returns = results.get("SPY", {})
+    relative_to_spy = {}
+    for tf in ["1d", "5d", "1mo", "ytd"]:
+        t_ret = ticker_returns.get(tf)
+        s_ret = spy_returns.get(tf)
+        if t_ret is not None and s_ret is not None:
+            relative_to_spy[tf] = round(t_ret - s_ret, 1)
+        else:
+            relative_to_spy[tf] = None
+
+    # Fetch VIX level
+    vix = None
+    try:
+        vix_ticker = yf.Ticker("^VIX")
+        vix_hist = vix_ticker.history(period="2d")
+        if vix_hist is not None and not vix_hist.empty:
+            vix = round(float(vix_hist["Close"].iloc[-1]), 1)
+    except Exception:
+        pass
+
+    return {
+        "ticker": ticker_symbol,
+        "sector_etf": sector_etf,
+        "returns": results,
+        "relative_to_spy": relative_to_spy,
+        "vix": vix,
     }

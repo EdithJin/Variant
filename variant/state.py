@@ -38,8 +38,9 @@ class AgentState(TypedDict):
     business_context: Optional[dict]    # Company name, sector, industry, description (no financials)
 
     # ── Gathered Data (populated by data sub-agents AFTER hypotheses) ─
-    # In POC: financial_data is real (yfinance), others are stubs
+    # In POC: financial_data and market_context are real (yfinance), others are stubs
     financial_data: Optional[dict]      # Price, ratios, margins, consensus
+    market_context: Optional[dict]      # Multi-timeframe relative perf vs SPY/QQQ/sector ETF + VIX
     expectations_data: Optional[dict]   # Market consensus estimates
     news_sentiment: Optional[dict]      # Recent news and sentiment
     filings_data: Optional[dict]        # SEC filings analysis

@@ -20,7 +20,7 @@ and is what makes the system genuinely agentic.
 from langgraph.graph import StateGraph, END
 
 from variant.state import AgentState
-from variant.nodes.financial_data import business_context_node, financial_data_node
+from variant.nodes.financial_data import business_context_node, financial_data_node, market_context_node
 from variant.nodes.hypothesis_generator import hypothesis_generator_node
 from variant.nodes.stubs import (
     expectations_stub_node,
@@ -45,9 +45,11 @@ def data_gathering_node(state: AgentState) -> dict:
     """
     updates = {}
 
-    # Only fetch financial data on first pass (won't change on re-runs)
+    # Only fetch financial data and market context on first pass (won't change on re-runs)
     if not state.get("financial_data"):
         updates.update(financial_data_node(state))
+    if not state.get("market_context"):
+        updates.update(market_context_node(state))
 
     # Stubs need the latest financial data to derive their placeholder values
     stub_state = {**state, **updates}

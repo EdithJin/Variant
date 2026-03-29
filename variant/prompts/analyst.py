@@ -23,6 +23,9 @@ INITIAL NARRATIVES (formed before detailed data):
 FINANCIAL DATA:
 {financial_data_json}
 
+MARKET CONTEXT (relative performance vs benchmarks):
+{market_context_json}
+
 EXPECTATIONS DATA:
 {expectations_data_json}
 
@@ -49,6 +52,15 @@ The financial data includes an "implied_expectations" section computed via simpl
 reverse DCF: given the current enterprise value, what revenue CAGR does the market \
 price imply over the next 5 years, holding current margins constant?
 
+IMPORTANT — SYSTEMATIC vs. IDIOSYNCRATIC DECOMPOSITION:
+Before interpreting the implied CAGR or any price movement, check the MARKET CONTEXT data. \
+The "Relative to SPY" row isolates the stock-specific component by subtracting the broad \
+market move. If relative performance is near zero across timeframes, the price move is \
+macro-driven (e.g., geopolitical crisis, rate shock, broad risk-off) and the expectations \
+gap reflects market-wide sentiment, not a changed view on this company's fundamentals. \
+Note this explicitly in your assessment and weight the gap accordingly. Only attribute \
+price action to company-specific expectations when relative performance diverges meaningfully.
+
 Use this to answer:
 - What revenue growth rate is embedded in the current price? (from implied_revenue_cagr_pct)
 - Compare the implied CAGR to the company's actual recent revenue growth — is the market \
@@ -56,6 +68,8 @@ Use this to answer:
 - Which of our 3 narratives does the implied growth trajectory most closely match?
 - Where might the market's implied expectations be wrong? (e.g., market implies 25% CAGR \
   but our base case sees growth decelerating to 15% — that's a meaningful gap)
+- If the stock is moving largely in line with the market, note that the gap may reflect \
+  macro repricing rather than a company-specific variant perception
 - If implied_expectations is null, fall back to comparing forward P/E vs trailing P/E \
   as a directional signal, but note the limitation
 
@@ -72,6 +86,10 @@ Look for data contradictions that signal something important:
 - Revenue growth accelerating but margins compressing (growth is being bought)
 - High analyst consensus but insider selling
 - Strong forward guidance but high short interest
+- Stock down significantly but relative to market/sector nearly flat (headline decline is \
+  macro-driven, not fundamental deterioration — this is important context, not a red flag)
+- Stock flat or up while sector is down sharply (relative outperformance suggests \
+  stock-specific strength despite macro headwinds)
 List each contradiction and the most likely explanation
 
 STEP 5 — LOOP DECISION

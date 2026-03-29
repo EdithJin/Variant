@@ -14,7 +14,7 @@ Two separate nodes serve different stages of the pipeline:
    anchor them.
 """
 from variant.state import AgentState
-from variant.tools.yfinance_tools import fetch_business_context, fetch_financial_snapshot
+from variant.tools.yfinance_tools import fetch_business_context, fetch_financial_snapshot, fetch_market_context
 
 
 def business_context_node(state: AgentState) -> dict:
@@ -27,3 +27,15 @@ def financial_data_node(state: AgentState) -> dict:
     ticker = state["ticker"]
     snapshot = fetch_financial_snapshot(ticker)
     return {"financial_data": snapshot}
+
+
+def market_context_node(state: AgentState) -> dict:
+    """
+    Fetch multi-timeframe relative performance data for the ticker vs
+    SPY, QQQ, and the sector ETF. Uses sector from business_context if available.
+    """
+    ticker = state["ticker"]
+    bc = state.get("business_context") or {}
+    sector = bc.get("sector")
+    context = fetch_market_context(ticker, sector=sector)
+    return {"market_context": context}
