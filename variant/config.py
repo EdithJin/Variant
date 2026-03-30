@@ -53,10 +53,12 @@ def get_llm(model: str = None, structured_output_schema=None):
 
     if LLM_PROVIDER == "groq":
         from langchain_groq import ChatGroq
-        llm = ChatGroq(model=m, api_key=os.environ["GROQ_API_KEY"])
+        llm = ChatGroq(model=m, api_key=os.environ["GROQ_API_KEY"],
+                        timeout=120, max_retries=2)
     else:
         from langchain_anthropic import ChatAnthropic
-        llm = ChatAnthropic(model=m, api_key=os.environ["ANTHROPIC_API_KEY"])
+        llm = ChatAnthropic(model=m, api_key=os.environ["ANTHROPIC_API_KEY"],
+                            timeout=120, max_retries=2)
 
     if structured_output_schema:
         return llm.with_structured_output(structured_output_schema)

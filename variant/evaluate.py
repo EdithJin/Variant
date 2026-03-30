@@ -43,8 +43,22 @@ import os
 import csv
 import json
 import time
+import logging
+import signal
 from pathlib import Path
 from datetime import datetime, date, timedelta
+
+# Per-ticker timeout (seconds). If a single ticker takes longer than this,
+# it's killed and recorded as an error. Normal runs take 150-190s on Anthropic.
+TICKER_TIMEOUT = 360  # 6 minutes — generous, but catches infinite hangs
+
+
+class TickerTimeout(Exception):
+    pass
+
+
+def _ticker_timeout_handler(signum, frame):
+    raise TickerTimeout(f"Ticker analysis exceeded {TICKER_TIMEOUT}s timeout")
 
 from dotenv import load_dotenv
 
@@ -232,12 +246,22 @@ def run_analysis(basket: list[dict] = None):
     out_dir = EVAL_DIR / today
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Set up log file for real-time progress (readable even when stdout is buffered)
+    log_path = out_dir / "run.log"
+    log = logging.getLogger("variant.evaluate")
+    log.setLevel(logging.INFO)
+    fh = logging.FileHandler(log_path, mode="a")
+    fh.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+    log.addHandler(fh)
+
     provider = os.environ.get("LLM_PROVIDER", "anthropic")
     model = os.environ.get("REASONING_MODEL", "default")
     print(f"Variant Evaluation — Phase 1 (Analysis)")
     print(f"Date: {today} | Provider: {provider} | Model: {model}")
     print(f"Tickers: {len(basket)} | Output: {out_dir}")
+    print(f"Log: {log_path}")
     print("-" * 55)
+    log.info(f"Starting evaluation: {len(basket)} tickers, provider={provider}")
 
     if provider == "groq":
         print("⚠  Running on Groq (free tier). Production evaluations should use Anthropic/Sonnet.")
@@ -254,10 +278,18 @@ def run_analysis(basket: list[dict] = None):
     sanity_rows = []
 
     # Re-add previously completed rows so the final CSV is complete
+    # Enrich with basket metadata (sector/size) if missing from prior run
+    basket_lookup = {e["ticker"]: e for e in basket}
     for row in completed.values():
+        ticker = row["ticker"]
+        if basket_lookup.get(ticker):
+            if not row.get("sector"):
+                row["sector"] = basket_lookup[ticker].get("sector", "")
+            if not row.get("size"):
+                row["size"] = basket_lookup[ticker].get("size", "")
         analysis_rows.append(row)
         sanity_rows.append({
-            "date": today, "ticker": row["ticker"],
+            "date": today, "ticker": ticker,
             "sanity_status": "pass", "passed": row.get("n_contradictions", ""), "failed": 0,
         })
 
@@ -273,10 +305,18 @@ def run_analysis(basket: list[dict] = None):
             continue
 
         print(f"[{i+1}/{len(basket)}] {ticker} ({sector}/{size})")
+        log.info(f"[{i+1}/{len(basket)}] START {ticker}")
         start = time.time()
 
         try:
+            # Set per-ticker timeout to catch infinite hangs
+            prev_handler = signal.signal(signal.SIGALRM, _ticker_timeout_handler)
+            signal.alarm(TICKER_TIMEOUT)
+
             state = run_single(ticker, query, graph)
+
+            signal.alarm(0)  # Cancel alarm on success
+            signal.signal(signal.SIGALRM, prev_handler)
             elapsed = round(time.time() - start, 1)
 
             # Save outputs immediately (survives crashes)
@@ -287,6 +327,7 @@ def run_analysis(basket: list[dict] = None):
             sanity = run_sanity_checks(state)
             (out_dir / f"{ticker}_sanity.json").write_text(json.dumps(sanity, indent=2))
             print(f"  {elapsed}s | sanity: {sanity['passed']}✓ {sanity['failed']}✗")
+            log.info(f"  OK {ticker} {elapsed}s sanity={sanity['passed']}/{sanity['total']}")
 
             row = _build_analysis_row(today, ticker, sector, size, query, provider, model, state, elapsed)
             analysis_rows.append(row)
@@ -297,8 +338,10 @@ def run_analysis(basket: list[dict] = None):
             })
 
         except Exception as e:
+            signal.alarm(0)  # Cancel alarm
             elapsed = round(time.time() - start, 1)
             print(f"  {elapsed}s | ERROR: {type(e).__name__}: {e}")
+            log.error(f"  FAIL {ticker} {elapsed}s {type(e).__name__}: {e}")
             analysis_rows.append(
                 _build_error_row(today, ticker, sector, size, query, provider, model, e, elapsed)
             )
