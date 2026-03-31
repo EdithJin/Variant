@@ -358,12 +358,124 @@ def run_analysis(basket: list[dict] = None):
     print(f"\n{'=' * 55}")
     print(f"PHASE 1 COMPLETE — {today}")
     print(f"Success: {n_ok}/{len(basket)} | Errors: {n_err}")
-    if n_err > 0:
-        print(f"To retry failed tickers: python -m variant.evaluate")
-        print(f"({n_ok} completed tickers will be skipped automatically)")
-    else:
-        print(f"Next: score with --score {today} (after 7+ days)")
     print(f"{'=' * 55}")
+
+    # Auto-validate to flag incomplete tickers
+    print()
+    validate_evaluation(today)
+
+
+# ── Post-run validation ───────────────────────────────────────────────
+#
+# Screens completed evaluations for incomplete data. A ticker is "incomplete"
+# if it's missing fields required for scoring (price, implied CAGR, closest
+# narrative). These tickers ran but produced low-quality output — typically
+# due to yfinance data failures or API issues.
+
+# Fields required for a valid, scorable evaluation row
+REQUIRED_FIELDS = ["price_at_analysis", "implied_cagr_pct", "closest_narrative"]
+
+
+def validate_evaluation(eval_date: str = None) -> list[str]:
+    """Screen an evaluation for incomplete tickers. Returns list of tickers to retry.
+
+    Args:
+        eval_date: ISO date string. Defaults to most recent evaluation.
+    """
+    if eval_date is None:
+        # Find most recent evaluation
+        for search_dir in [EVAL_DIR, RESULTS_DIR / "evaluations"]:
+            if search_dir.exists():
+                dates = sorted((d.name for d in search_dir.iterdir()
+                                if d.is_dir() and (d / "analysis_summary.csv").exists()), reverse=True)
+                if dates:
+                    eval_date = dates[0]
+                    break
+    if not eval_date:
+        print("No evaluations found.")
+        return []
+
+    # Load summary from either location
+    summary_csv = RESULTS_DIR / "evaluations" / eval_date / "analysis_summary.csv"
+    if not summary_csv.exists():
+        summary_csv = EVAL_DIR / eval_date / "analysis_summary.csv"
+    if not summary_csv.exists():
+        print(f"No analysis_summary.csv found for {eval_date}")
+        return []
+
+    with open(summary_csv) as f:
+        rows = list(csv.DictReader(f))
+
+    print(f"Validating evaluation: {eval_date} ({len(rows)} tickers)")
+    print("-" * 55)
+
+    incomplete = []
+    errors = []
+    valid = []
+
+    for row in rows:
+        ticker = row["ticker"]
+        status = row.get("status", "")
+
+        if status == "error":
+            errors.append(ticker)
+            print(f"  {ticker}: ERROR — {row.get('gap_assessment', 'unknown')[:80]}")
+            continue
+
+        missing = [f for f in REQUIRED_FIELDS if not row.get(f) or row[f] == "None"]
+        if missing:
+            incomplete.append(ticker)
+            print(f"  {ticker}: INCOMPLETE — missing {', '.join(missing)}")
+        else:
+            valid.append(ticker)
+
+    print(f"\n{'=' * 55}")
+    print(f"Valid: {len(valid)} | Incomplete: {len(incomplete)} | Errors: {len(errors)}")
+    retry_tickers = incomplete + errors
+    if retry_tickers:
+        print(f"To retry: python -m variant.evaluate --retry {eval_date}")
+    else:
+        print("All tickers valid — ready for scoring.")
+    print(f"{'=' * 55}")
+    return retry_tickers
+
+
+def retry_incomplete(eval_date: str):
+    """Re-run incomplete/errored tickers for a given evaluation date."""
+    retry_tickers = validate_evaluation(eval_date)
+    if not retry_tickers:
+        return
+
+    print(f"\nRetrying {len(retry_tickers)} tickers: {', '.join(retry_tickers)}")
+
+    # Remove these tickers from the existing summary so resume doesn't skip them
+    out_dir = EVAL_DIR / eval_date
+    summary_path = out_dir / "analysis_summary.csv"
+    if summary_path.exists():
+        with open(summary_path) as f:
+            rows = list(csv.DictReader(f))
+        kept = [r for r in rows if r["ticker"] not in retry_tickers]
+        _write_csv(summary_path, kept)
+
+    # Also update the tracked copy
+    tracked_path = RESULTS_DIR / "evaluations" / eval_date / "analysis_summary.csv"
+    if tracked_path.exists():
+        with open(tracked_path) as f:
+            rows = list(csv.DictReader(f))
+        kept = [r for r in rows if r["ticker"] not in retry_tickers]
+        _write_csv(tracked_path, kept)
+
+    # Build basket from tickers.csv for sector/size, fall back to generic
+    full_basket = {e["ticker"]: e for e in load_basket()}
+    q = "What does the market expect, and where might expectations be wrong?"
+    basket = []
+    for t in retry_tickers:
+        if t in full_basket:
+            basket.append(full_basket[t])
+        else:
+            basket.append({"ticker": t, "query": q, "sector": "", "size": ""})
+
+    run_analysis(basket)
 
 
 # ── Phase 2: Scoring ──────────────────────────────────────────────────
@@ -598,7 +710,18 @@ def _append_csv(path: Path, rows: list[dict]):
 def main():
     args = sys.argv[1:]
 
-    if "--consistency" in args:
+    if "--validate" in args:
+        idx = args.index("--validate")
+        eval_date = args[idx + 1] if idx + 1 < len(args) else None
+        validate_evaluation(eval_date)
+    elif "--retry" in args:
+        idx = args.index("--retry")
+        eval_date = args[idx + 1] if idx + 1 < len(args) else None
+        if not eval_date:
+            print("Error: --retry requires a date (e.g., --retry 2026-03-29)")
+            sys.exit(1)
+        retry_incomplete(eval_date)
+    elif "--consistency" in args:
         idx = args.index("--consistency")
         ticker = args[idx + 1] if idx + 1 < len(args) else "NVDA"
         run_consistency_check(ticker)
