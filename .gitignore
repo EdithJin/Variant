@@ -12,5 +12,8 @@ venv/
 # Daily evaluation raw output (large, noisy)
 evaluations/
 
+# But track evaluation summaries in results/ (needed for CI scoring)
+!results/evaluations/
+
 # Claude Code context (internal, not for repo visitors)
 CLAUDE.md
